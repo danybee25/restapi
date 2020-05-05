@@ -1,18 +1,32 @@
 from flask import Flask, request, jsonify
+import logging
+LOG_FORMAT = "%(levelname)s %(asctime)s -%(message)s"
+
+logging.basicConfig(filename="restapi.log", level=logging.DEBUG,
+                    format=LOG_FORMAT, filemode="w")
+
+logger = logging.getLogger()
 
 app = Flask(__name__)
 
 
 @app.route('/api', methods=['GET', 'POST'])
 def test():
+    """Return a json data with the different power plant to satisfy the load energy."""
     if request.method == 'POST':
         energy_data = request.get_json()
-        load = energy_data['load']  # This is the load energy that should be compensated for by the power stations.
+        try:
+            load = energy_data['load']  # This is the load energy that should be compensated for by the power stations.
+        except KeyError:
+            logger.error("Specify a load in the json data")
+
+        logger.info("Compute the cost for the different power plants")
         gas_cost = energy_data['fuels']['gas(euro/MWh)']  # Price of gas calculated in (euro/MWh)
         co2_cost = energy_data['fuels']["co2(euro/ton)"]
         kerosine_cost = energy_data['fuels']['kerosine(euro/MWh)']  # Price of kerosine calculated in (euro/MWh)
 
         available_power_plants = energy_data['powerplants']
+
 
         #calculate unit cost for each plant
         for plant in available_power_plants:
@@ -25,7 +39,7 @@ def test():
                 cost = kerosine_cost/plant["efficiency"]
             elif "wind" in plant["name"]:
                 cost = 0
-            plant.update({"unit cost":cost})
+            plant.update({"unit cost": cost})
 
         ##Power plants sorted by unit cost and pmax
         available_power_plants = sorted(available_power_plants, key=lambda k: (k['unit cost'],k["pmax"]), reverse=False)
@@ -39,12 +53,13 @@ def test():
             power =0
             if plant['type'] == 'windturbine':
 
-                if load > (plant["pmax"] * energy_data['fuels']['wind(%)'])/100 :
-
-                    power = round((plant['pmax'] * (energy_data['fuels']['wind(%)'] )/ 100), 2)
+                if load > (plant["pmax"] * energy_data['fuels']['wind(%)'])/100:
+                    logger.debug("Compute the amount of power to be supplied by the wind turbine")
+                    power = round((plant['pmax'] * (energy_data['fuels']['wind(%)'])/ 100), 2)
 
                 elif load <= plant["pmax"] and energy_data['fuels']['wind(%)']/100 > 0:
                     power = load
+                    logger.info("Amount of power to be supplied by the wind turbine when the load is less than wind power")
                     # else:
                     #     power = round(plant["pmax"] * (energy_data['fuels']['wind(%)'] / 100), 2)
 
@@ -52,32 +67,36 @@ def test():
                     pass
             elif plant['type'] == 'gasfired' :
                 if load > plant["pmax"]:
+                    logger.debug("Computing how much power will be generated from the gas plant.")
                     power = round(plant['pmax'] , 2)
 
                 else:
+                    logger.debug(
+                        "Computing how much power will be generated from the gas plant for loads less than the pmax")
                     power = round(load, 2)
-
 
             elif plant['type'] == 'turbojet':
                 if load > plant["pmax"]:
+                    logger.debug(
+                        "Computing how much power will be generated from the turbojet")
                     power = round(plant['pmax'] , 2)
                     # load -= power
                 else:
+                    logger.debug(
+                        "Computing how much power will be generated from the turbojet for loads less than the pmax")
                     power = round(load, 2)
 
-
             index += 1
-            print (plant['name'],power)
+
             if load > 0 and load >= plant['pmin'] :
                 load -= power
                 power_needed.append({ "name": plant['name'],"p": power})
-
 
             elif load > 0 and load < plant['pmin'] :
                 power_needed.append({ "name": plant['name'],"p": 0})
 
             elif load <= 0:
-                print("pow",power)
+
                 if plant['pmin'] > power and power>0:
                     reserve = plant['pmin'] - power
                     power_needed.append({"name": plant['name'], "p": plant['pmin']})
@@ -85,9 +104,9 @@ def test():
                     reserve = 0
                     power_needed.append({"name": plant['name'], "p": power})
                 break
-        print(power_needed)
+
         if reserve > 0:
-            print('reserve',reserve)
+
             power_needed[-2]['p'] = power_needed[-2]['p'] - reserve
 
         for i in range(index,len(available_power_plants)):
@@ -100,4 +119,4 @@ def test():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0')
